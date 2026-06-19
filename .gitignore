@@ -1,0 +1,16 @@
+# Keep this repository focused on study notes.
+*
+
+!.gitignore
+!/*.md
+!docs/
+!docs/**/
+!docs/**/*.md
+!scripts/
+!scripts/**/
+!scripts/**/*.ps1
+
+# Keep machine-specific working notes out of public pushes.
+local-only/
+temporary/
+journey/

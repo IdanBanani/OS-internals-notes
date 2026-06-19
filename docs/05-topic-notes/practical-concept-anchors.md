@@ -1,0 +1,99 @@
+# Practical Concept Anchors
+
+Value Score: 90/100
+Role: Practical concept anchor index
+Proof Level: Lab-routed
+
+Date: 2026-06-18
+
+Purpose: stop dense terms from becoming empty labels. When a note mentions an abbreviation such as IOMMU, PTE, VAD, IRP, MDL, LSM, RCU, ETW, or page cache, the reader should know what the term expands to, which layer owns it, why it exists, how it becomes useful in real investigation/research, and which lab or owner document teaches it.
+
+This file is not a replacement for the owner docs. It is the "do not leave me with only an acronym" index.
+
+## Usage Rule
+
+For every dense term, the first meaningful mention in a document should do at least one of these:
+
+1. Expand the abbreviation.
+2. Link to this file or a deeper owner doc.
+3. State a practical evidence path: command, debugger view, trace, source file, or toy experiment.
+
+Bad shape:
+
+```text
+DMA/IOMMU matters for device security.
+```
+
+Better shape:
+
+```text
+DMA matters because a device can read/write memory without CPU copies; an IOMMU constrains which physical pages that device can reach. Prove the concept by comparing DMA buffer pinning/MDL or Linux DMA-mapping paths with the device's allowed mapping lifetime.
+```
+
+## Memory And Translation
+
+| Term | Expands to / owns | Practical model | Practical use and proof path | Deeper owner |
+|---|---|---|---|---|
+| VMA | Virtual Memory Area, Linux memory manager | A Linux range-policy record: address range, permissions, backing object, growth/COW flags, and mapping type. It is not the physical page and not the PTE. | Use `/proc/<pid>/maps` for the range, `/proc/<pid>/smaps` for RSS/PSS/dirty state, and a small `mmap`/`mprotect`/`fork` program to prove range policy versus residency. | [Linux address-space MM](<../03-linux/01-address-space-mm.md>), [Hands-on labs L1](<../06-hands-on-labs/README.md#l1---vma-page-fault-residency-and-cow>) |
+| VAD | Virtual Address Descriptor, Windows memory manager | A Windows range-policy record for private allocations, mapped views, images, guard pages, and protections. It is the Windows-side range model, not the PTE itself. | Use VMMap, Process Explorer, or WinDbg `!address`/`!vad` to compare private, mapped, image, heap, stack, and protection changes after `VirtualAlloc`, `MapViewOfFile`, or DLL load. | [VAD/VMA management](<vad-vma-management-internals.md>), [Windows mechanisms](<../04-windows/06-source-enriched-windows-mechanisms.md>), [Hands-on labs W3](<../06-hands-on-labs/README.md#w3---vads-private-memory-sections-and-protection-changes>) |
+| PTE | Page Table Entry | Hardware-facing translation and permission entry, plus OS-specific software encodings when invalid/nonpresent. Do not treat it as the same layer as VMA/VAD. | On Linux, use page-fault experiments plus kernel source around `mm/memory.c`. On Windows, compare `!pte`, `!vad`, working set, and VMMap where available. Mutation idea: `mprotect`/`VirtualProtect` then observe permission changes and fault behavior. | [Paging, residency, page lists, and shared memory](<paging-residency-page-lists-and-shared-memory.md>), [x86 privilege rings](<x86-privilege-rings-descriptors-and-syscall-entry.md>) |
+| PFN | Page Frame Number; Windows also has PFN database | The physical-page identity/state layer below virtual mappings. PFN state explains residency, reference/share counts, standby/free/modified lists, and reverse relationships. | Use Windows debugger/PFN views when available; on Linux use `/proc/kpage*` only in controlled labs and prefer conceptual proof through `smaps`, page-fault counts, and reclaim behavior. | [Paging, residency, page lists, and shared memory](<paging-residency-page-lists-and-shared-memory.md>) |
+| TLB | Translation Lookaside Buffer | CPU cache of address translations. Page-table changes require invalidation/synchronization or stale translations may remain. | Prove indirectly: change page permissions with `mprotect`/`VirtualProtect`, trigger access faults, and study why kernels need shootdowns on multiprocessor systems. | [x86 privilege rings](<x86-privilege-rings-descriptors-and-syscall-entry.md>), [Hardware security Q&A](<../02-question-banks/05-hardware-security-relationship-qa.md>) |
+| COW | Copy-on-write | Shared physical page becomes private only when a writer needs mutation. It is a memory-saving and process-creation mechanism, not a magic clone. | Linux: `fork`, write half the pages, compare `smaps` private/shared dirty and page-fault counts. Windows: compare image-backed pages and private dirty pages after patching a mapped image page in a lab. | [Hands-on labs L1](<../06-hands-on-labs/README.md#l1---vma-page-fault-residency-and-cow>), [Linux Q&A](<../02-question-banks/01-linux-deep-understanding-qa.md>) |
+| page cache | Linux file-backed page cache | RAM cache of file contents and mmap-backed file pages. It sits between file I/O, memory mappings, reclaim, writeback, and filesystem state. | Open/read a file twice, compare cache effects; map a file with `MAP_SHARED`, write, inspect `smaps`, dirty pages, and writeback behavior; test deleted-open files to separate pathname from cached object. | [Linux page cache/reclaim](<../03-linux/02-page-cache-reclaim-allocators.md>), [Hands-on labs L3](<../06-hands-on-labs/README.md#l3---fd-path-and-object-lifetime>) |
+| section object | Windows memory object for files, images, and shared memory | A section is the kernel object behind mapped views, image mappings, shared memory, and many loader/memory behaviors. | Create a file mapping, map it into two processes, mutate one view, and inspect VMMap/Procmon/WinDbg. Compare mapped file, image, and private memory evidence. | [Windows kernel memory, sections, privileges, and ASLR](<windows-kernel-memory-sections-privileges-and-aslr.md>), [Hands-on labs W3](<../06-hands-on-labs/README.md#w3---vads-private-memory-sections-and-protection-changes>) |
+| MDL | Memory Descriptor List, Windows I/O/memory manager | Describes locked pages backing a buffer, commonly for direct I/O, DMA, and kernel mappings. It is a lifetime contract for pages, not just a list. | In driver/IOCTL analysis, ask which buffering method is used, whether user pages were probed/locked, who owns completion, and whether pages can go stale. Use WinDbg/driver docs in a VM lab. | [Low-level critical terms](<low-level-security-critical-terms.md#mdl>), [Windows mechanisms](<../04-windows/06-source-enriched-windows-mechanisms.md>) |
+| DMA | Direct Memory Access | Device performs memory reads/writes without CPU copying. The kernel/driver must pin/map the right pages for the right device/direction/lifetime. | Follow a driver buffer path: user buffer -> probe/lock or copy -> DMA mapping or MDL -> completion/unmap/unpin. Look for stale mapping, wrong direction, length, and lifetime errors. | [Hardware security Q&A](<../02-question-banks/05-hardware-security-relationship-qa.md>), [Low-level critical terms](<low-level-security-critical-terms.md#dma-pinning>) |
+| IOMMU | Input/Output Memory Management Unit | MMU-like protection for devices. It constrains which physical pages a device can DMA to/from, often through per-device domains/page tables. | Practical security question: can this device/driver DMA only to pages intentionally mapped for it? Evidence comes from OS DMA-mapping APIs, driver code, hypervisor/IOMMU policy, device assignment config, and kernel logs/tools where available. | [Hardware security Q&A](<../02-question-banks/05-hardware-security-relationship-qa.md>), [Remote attacker mechanisms](<remote-attacker-low-level-mechanisms.md>) |
+
+## Linux Kernel And Security Terms
+
+| Term | Expands to / owns | Practical model | Practical use and proof path | Deeper owner |
+|---|---|---|---|---|
+| VFS | Virtual Filesystem | Linux abstraction that turns fd/path operations into `struct file`, inode/dentry/superblock, filesystem operations, and page-cache interactions. | Trace `openat`, `read`, `unlink`, and `close`; inspect `/proc/<pid>/fd`; compare path lifetime with open file lifetime. | [Linux source map](<../03-linux/source-map.md>), [Hands-on labs L3](<../06-hands-on-labs/README.md#l3---fd-path-and-object-lifetime>) |
+| LSM | Linux Security Module | Hook framework for Linux security policy such as SELinux, AppArmor, Landlock, and BPF LSM. It is an enforcement hook layer, not a single policy. | Use `lsm`, audit logs, denied operations, and policy state to explain why a syscall failed after DAC/capability checks seemed okay. | [Linux Q&A](<../02-question-banks/01-linux-deep-understanding-qa.md>), [Linux source map](<../03-linux/source-map.md>) |
+| seccomp | Secure computing syscall filter | Per-process attack-surface reduction: filter syscall numbers and arguments, usually after process setup. | Run a process with a simple seccomp profile, call a blocked syscall, and inspect `strace`/audit result. Explain that seccomp does not replace credentials, namespaces, or LSM. | [Hands-on labs L4](<../06-hands-on-labs/README.md#l4---credentials-capabilities-and-namespace-boundaries>), [Linux source map](<../03-linux/source-map.md>) |
+| RCU | Read-Copy-Update | Synchronization/lifetime pattern: readers run cheaply while updaters publish new state and defer freeing until old readers finish. | In code review, ask: who holds a reference, who publishes, when is free deferred, and what happens after grace period? In Linux labs, study list traversal patterns and lockdep/KCSAN reports. | [Linux Q&A](<../02-question-banks/01-linux-deep-understanding-qa.md>), [Linux source map](<../03-linux/source-map.md>) |
+| eBPF/BPF | Extended Berkeley Packet Filter / BPF subsystem | Safe-ish in-kernel programmable programs constrained by verifier, helpers, maps, program types, and attach points. Used for tracing, networking, and security policy. | Use bpftrace or tracepoints to validate a hypothesis, but always ask what the verifier proved, which helper/attach point is allowed, and what privilege/policy loaded it. | [Linux source map](<../03-linux/source-map.md>), [Vulnerability primitives](<vulnerability-research-and-exploitation-primitives.md>) |
+| io_uring | Linux async I/O interface | Shared submission/completion rings plus registered files/buffers and worker contexts. Security complexity comes from shared memory, lifetime, cancellation, and async completion. | Write/read through an example or study CQE/SQE behavior. Distinguish submission success from completion result; mutate cancellation and buffer lifetime assumptions. | [Linux source map](<../03-linux/source-map.md>), [Related API semantics](<../01-comparisons-and-maps/05-related-system-calls-and-api-semantics.md>) |
+| SLUB | Linux slab allocator implementation | Kernel object-cache allocator. Exploitability depends on object size class, lifetime, freelist hardening, reuse, and cache isolation. | Use slab debug/KASAN/KFENCE in a lab kernel; in writeups, identify object type, cache, allocation/free path, and reuse primitive rather than saying "heap bug." | [Linux page cache/reclaim/allocators](<../03-linux/02-page-cache-reclaim-allocators.md>), [Vulnerability primitives](<vulnerability-research-and-exploitation-primitives.md>) |
+
+## Windows Kernel And Telemetry Terms
+
+| Term | Expands to / owns | Practical model | Practical use and proof path | Deeper owner |
+|---|---|---|---|---|
+| IRP | I/O Request Packet | Windows I/O request object sent through driver stacks. It carries operation type, stack locations, file/device object, buffers/MDLs, status, completion, and cancellation state. | In IOCTL analysis, map `CreateFile` handle -> `DeviceIoControl` -> `IRP_MJ_DEVICE_CONTROL` -> driver dispatch -> buffer method -> completion. | [Low-level critical terms](<low-level-security-critical-terms.md#irp>), [Windows mechanisms](<../04-windows/06-source-enriched-windows-mechanisms.md>) |
+| IOCTL | I/O control request | Driver-defined command encoded with device type, function, buffering method, and access bits. Not just a function call. | Decode IOCTL fields, check handle access, buffer method, size validation, caller mode, and completion path. Use WinDbg/Procmon/driver code in a VM. | [Windows mechanisms](<../04-windows/06-source-enriched-windows-mechanisms.md>), [Windows Q&A](<../02-question-banks/02-windows-deep-understanding-qa.md>) |
+| APC | Asynchronous Procedure Call, Windows thread mechanism | Work delivered to a specific thread under specific conditions. Kernel and user APCs differ; alertable waits matter for user APCs. | In injection/async I/O analysis, ask which thread, which mode, whether it enters alertable wait, and what evidence appears in thread start/APC/wait state. | [Windows mechanisms](<../04-windows/06-source-enriched-windows-mechanisms.md>), [Windows roadmap explanations](<../04-windows/08-windows-roadmap-know-cold-explanations.md>) |
+| DPC | Deferred Procedure Call | Deferred kernel work after interrupt urgency, still constrained compared with normal thread context. | Driver debugging question: is this code allowed to block or touch pageable memory? Use IRQL, stack, and crash dump evidence. | [Windows mechanisms](<../04-windows/06-source-enriched-windows-mechanisms.md>), [Low-level critical terms](<low-level-security-critical-terms.md>) |
+| ALPC | Advanced Local Procedure Call | Windows high-performance local IPC with ports, messages, attributes, handles/sections, and security context. | For service/broker bugs, inspect endpoint security, client identity, impersonation, handle/view transfer, and message lifetime. | [Windows IPC named pipes, RPC, ALPC, and security](<windows-ipc-named-pipes-rpc-alpc-security.md>) |
+| RPC | Remote Procedure Call | Marshalled client/server call framework above transports such as ALPC/named pipes/TCP, with binding/authentication/impersonation policy. | Practical use: enumerate endpoint, binding, authentication level, interface, server token, and object/handle effects behind the call. | [Windows IPC named pipes, RPC, ALPC, and security](<windows-ipc-named-pipes-rpc-alpc-security.md>) |
+| ETW | Event Tracing for Windows | Provider/session/consumer tracing infrastructure. It is evidence emitted by providers, not the object state itself. | Use it to correlate process, image, file, registry, network, and provider-specific events. Validate against handles, VADs, file IDs, Procmon, memory maps, and debugger state. | [Windows mechanisms](<../04-windows/06-source-enriched-windows-mechanisms.md>), [Windows Q&A](<../02-question-banks/02-windows-deep-understanding-qa.md>) |
+| AMSI | Antimalware Scan Interface | Content-inspection interface used by participating script/dynamic-content hosts before execution. | In analysis, ask whether the host participates, what content was submitted, what provider saw, and what independent evidence remains if AMSI is absent or tampered. | [Windows roadmap explanations](<../04-windows/08-windows-roadmap-know-cold-explanations.md>), [Attacker-relevant structures](<attacker-relevant-structures-and-components.md>) |
+| PEB | Process Environment Block | User-mode per-process metadata: loader lists, process parameters, environment, heap flags, API-set map, image base. It is useful evidence, not kernel truth. | Compare PEB loader lists with VMMap/VADs, ETW image-load events, module lists, and memory bytes to detect unlinked/manual-mapped code. | [Windows mechanisms](<../04-windows/06-source-enriched-windows-mechanisms.md>), [Windows case-study resource map](<../04-windows/02-windows-case-study-resource-map.md>) |
+| TEB | Thread Environment Block | User-mode per-thread metadata: stack bounds, TLS, last error, thread identity fields, PEB pointer. | Use in debugging/reversing to inspect stack/TLS/exception context, but cross-check with kernel thread/debugger views. | [Windows mechanisms](<../04-windows/06-source-enriched-windows-mechanisms.md>) |
+| PPL | Protected Process Light | Windows process protection state that restricts what handles/rights lower-protection callers can obtain. It is not "admin" and not just a token privilege. | Try/observe access failures to LSASS-like protected processes in a lab; compare process protection, signer level, handle rights, Credential Guard/VBS state, and Code Integrity events. | [Low-level critical terms](<low-level-security-critical-terms.md#ppl-state>), [Windows Q&A](<../02-question-banks/02-windows-deep-understanding-qa.md>) |
+
+## Hardware, Mitigation, And Boundary Terms
+
+| Term | Expands to / owns | Practical model | Practical use and proof path | Deeper owner |
+|---|---|---|---|---|
+| SMEP | Supervisor Mode Execution Prevention | Prevents kernel/supervisor instruction fetch from user pages. Degrades old ret2usr-style primitives. | In exploit reasoning, ask whether the primitive executes user bytes from kernel mode or only changes data. Check CR4/feature state in debugger/lab. | [x86 privilege rings](<x86-privilege-rings-descriptors-and-syscall-entry.md>) |
+| SMAP | Supervisor Mode Access Prevention | Prevents kernel/supervisor data access to user pages except through controlled access windows. | In syscall/driver analysis, ask whether user buffers are copied/probed with the right routines instead of raw dereference. | [x86 privilege rings](<x86-privilege-rings-descriptors-and-syscall-entry.md>), [Hands-on labs L5](<../06-hands-on-labs/README.md#l5---syscall-entry-and-user-pointer-validation>) |
+| KPTI/KVA shadow | Kernel Page Table Isolation / Windows kernel virtual address shadow | Splits user view from full kernel mapping view to reduce Meltdown-class leakage. Not the same as VBS. | Use as a constraint in page-table/kernel-address discussions. Evidence is build/config/debugger feature state, not just the term appearing in a writeup. | [Low-level critical terms](<low-level-security-critical-terms.md#kpti-and-kva-shadow>), [x86 privilege rings](<x86-privilege-rings-descriptors-and-syscall-entry.md>) |
+| VBS/HVCI | Virtualization-Based Security / Hypervisor-protected Code Integrity | Hypervisor/VTL-backed isolation and code-integrity enforcement on Windows. | Practical question: which code/data is protected from the normal kernel, what policy enables it, and what telemetry/config proves it is on? | [Windows mechanisms](<../04-windows/06-source-enriched-windows-mechanisms.md>), [Windows Q&A](<../02-question-banks/02-windows-deep-understanding-qa.md>) |
+| CFG/CET | Control Flow Guard / Control-flow Enforcement Technology | Mitigations that constrain indirect calls and returns/shadow stacks. They restrict control-flow primitives, not all logic/data attacks. | Compile small programs with/without mitigation flags where possible; inspect binary metadata and crash behavior for invalid indirect calls/returns. | [Windows long-term roadmap](<../04-windows/01-windows-long-term-mastery-roadmap.md>), [Vulnerability primitives](<vulnerability-research-and-exploitation-primitives.md>) |
+| KASLR/ASLR | Kernel/User Address Space Layout Randomization | Randomizes placement so address-dependent primitives need leaks or brute-force/reliability work. | Practical proof: compare module/mapping bases across runs/reboots and show how a pointer leak collapses uncertainty. | [Hardware security Q&A](<../02-question-banks/05-hardware-security-relationship-qa.md>), [Vulnerability primitives](<vulnerability-research-and-exploitation-primitives.md>) |
+
+## Abbreviation Smell Test
+
+When reviewing a note, flag any acronym if the local paragraph cannot answer:
+
+1. What does it expand to?
+2. Which layer owns it: CPU, MMU, kernel, driver, file system, security subsystem, runtime, or tool?
+3. What problem does it solve?
+4. Which authority, lifetime, mapping, or evidence state does it change?
+5. What local command, toy program, debugger view, trace, source file, or build flag teaches it?
+6. Which owner document should the reader open next?
+
+If the paragraph cannot answer at least three of these, it is probably still a cheatsheet sentence.
